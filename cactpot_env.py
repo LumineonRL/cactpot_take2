@@ -1,7 +1,7 @@
 from typing import Tuple, List, Dict, Optional
 import gymnasium as gym
-from gym import spaces
-from gym import utils
+from gymnasium import spaces
+from gymnasium.utils import seeding
 import numpy as np
 
 class CactPot(gym.Env):
@@ -29,15 +29,12 @@ class CactPot(gym.Env):
     }
         
     def __init__(self):
-        super(CactPot, self).__init__()
+        super().__init__()
         self.max_selections = 3
         self.grid_size = 3
         self.num_values = 9
         self.action_space = spaces.Discrete(9)
-        self.observation_space = spaces.Tuple((
-            spaces.Box(low=0, high=1, shape=(self.grid_size, self.grid_size, self.num_values), dtype=np.int32),
-            spaces.Discrete(2)
-        ))
+        self.observation_space = spaces.Box(low=0, high=1, shape=(self.grid_size * self.grid_size * self.num_values + 1,), dtype=np.float32)
         self.true_grid = None
         self.one_hot_grid = None
         self.revealed_count = 0
@@ -46,20 +43,21 @@ class CactPot(gym.Env):
         self.max_penalty = -max(self.PAYOUT.values())
         self.reset()
 
-    def reset(self) -> Dict[str, np.ndarray]:
+    def reset(self, **kwargs):
         self.true_grid = self._generate_unique_numbers()
         self.one_hot_grid = np.zeros((self.grid_size, self.grid_size, self.num_values), dtype=np.int32)
         self.revealed_count = 0
         self.selected_line = None
         self.reward = 0
         
-        return (self.one_hot_grid, 0 if self.revealed_count < self.max_selections else 1)
+        flat_obs = self._get_flat_observation()
+        return flat_obs, {}
     
     def seed(self, seed: int = None) -> List[int]:
-        self.np_random, seed = gym.utils.seeding.np_random(seed)
+        self.np_random, seed = seeding.np_random(seed)
         return [seed]
 
-    def step(self, action: int) -> Tuple[Dict[str, np.ndarray], int, bool, dict]:
+    def step(self, action: int) -> Tuple[Dict[str, np.ndarray], int, bool, bool, dict]:
         if self.revealed_count < self.max_selections:
             if 1 <= action + 1 <= 9 and not self._is_revealed(action):
                 self._reveal_number(action)
@@ -74,8 +72,9 @@ class CactPot(gym.Env):
         done = self.selected_line is not None
         if done:
             self._reveal_all()
-
-        return (self.one_hot_grid, 0 if self.revealed_count < self.max_selections else 1), self.reward, done, {}
+    
+        flat_obs = self._get_flat_observation()
+        return flat_obs, self.reward, done, False, {}
 
     def _is_revealed(self, action: int) -> bool:
         row, col = self._get_grid_position(action)
@@ -159,9 +158,8 @@ class CactPot(gym.Env):
             for col in range(self.grid_size):
                 number = self.true_grid[row, col] - 1
                 self.one_hot_grid[row, col, number] = 1
-
-    def _get_observation(self) -> Dict[str, np.ndarray]:
-        return {
-            'grid': self.one_hot_grid,
-            'phase': 0 if self.revealed_count < self.max_selections else 1
-        }
+        
+    def _get_flat_observation(self):
+        flat_grid = self.one_hot_grid.flatten()
+        phase_obs = np.array([0 if self.revealed_count < self.max_selections else 1], dtype=np.int32)
+        return np.concatenate([flat_grid, phase_obs])
